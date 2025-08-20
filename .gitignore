@@ -1,0 +1,38 @@
+# Private keys and sensitive files
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Instance tracking files
+.last-instance-id
+
+# AWS credentials
+.aws/
+credentials
+config
+
+# Logs
+*.log
+*.out
+
+# Temporary files
+*.tmp
+*.swp
+*.bak
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# Environment files
+.env
+.env.local
+.env.*.local
