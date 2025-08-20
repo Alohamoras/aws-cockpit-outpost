@@ -70,8 +70,13 @@ Installation progress is automatically monitored with:
 
 Once deployment completes:
 - **Cockpit Web UI:** https://[PUBLIC_IP]:9090
-- **SSH Access:** `ssh -i ryanfill.pem ec2-user@[PUBLIC_IP]`
+- **SSH Access:** `ssh -i ryanfill.pem rocky@[PUBLIC_IP]`
 - **Installation Logs:** `/var/log/user-data.log` on the instance
+
+### Login Credentials
+- **Username:** `admin` or `rocky` 
+- **Password:** `Cockpit123`
+- Both users have sudo privileges
 
 ## Troubleshooting
 

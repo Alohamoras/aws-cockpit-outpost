@@ -1,5 +1,5 @@
 #!/bin/bash
-# AWS EC2 User Data Script for Cockpit Installation on Amazon Linux 2023
+# AWS EC2 User Data Script for Cockpit Installation on Rocky Linux 9
 # This script installs and configures Cockpit with various modules
 
 # Exit on any error
@@ -14,6 +14,10 @@ echo "Starting Cockpit installation at $(date)"
 echo "Updating system packages..."
 dnf update -y
 
+# Install EPEL repository (required for Cockpit packages)
+echo "Installing EPEL repository..."
+dnf install -y epel-release
+
 # Install Cockpit and required modules
 echo "Installing Cockpit and modules..."
 dnf install -y \
@@ -25,8 +29,11 @@ dnf install -y \
     cockpit-system \
     cockpit-ws \
     cockpit-packagekit \
-    cockpit-pcp \
     cockpit-sosreport
+
+# Try to install cockpit-pcp separately (may not be available)
+echo "Installing optional performance monitoring module..."
+dnf install -y cockpit-pcp || echo "cockpit-pcp not available, skipping..."
 
 # Install additional dependencies for virtualization (for cockpit-machines)
 echo "Installing virtualization dependencies..."
@@ -86,6 +93,18 @@ fi
 
 # Enable and start required services
 echo "Enabling and starting services..."
+
+# Create admin user for Cockpit access
+echo "Creating admin user for Cockpit access..."
+useradd -m -G wheel admin
+echo 'admin:Cockpit123' | chpasswd
+echo "Created admin user with username 'admin' and password 'Cockpit123'"
+
+# Also ensure rocky user has wheel group access and a password
+echo "Configuring rocky user for Cockpit access..."
+usermod -aG wheel rocky
+echo 'rocky:Cockpit123' | chpasswd
+echo "Set password for rocky user: 'Cockpit123'"
 
 # Enable Cockpit socket (will start on demand)
 systemctl enable --now cockpit.socket

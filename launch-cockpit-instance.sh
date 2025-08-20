@@ -9,7 +9,7 @@ set -e
 OUTPOST_ID="op-0c81637caaa70bcb8"
 SUBNET_ID="subnet-0ccfe76ef0f0071f6"
 SECURITY_GROUP_ID="sg-03e548d8a756262fb"
-KEY_NAME="Ryanfill"
+KEY_NAME="ryanfill"
 INSTANCE_TYPE="c6id.metal"
 REGION="us-east-1"
 USER_DATA_FILE="./user-data.sh"
@@ -65,21 +65,21 @@ check_prerequisites() {
     success "Prerequisites check passed"
 }
 
-# Get latest Amazon Linux 2023 AMI
+# Get latest Rocky Linux 9 AMI
 get_latest_ami() {
-    log "Finding latest Amazon Linux 2023 AMI..."
+    log "Finding latest Rocky Linux 9 AMI..."
     
     AMI_ID=$(aws ec2 describe-images \
         --region "$REGION" \
-        --owners amazon \
-        --filters "Name=name,Values=al2023-ami-2023*" \
+        --owners 679593333241 \
+        --filters "Name=name,Values=Rocky-9-EC2-LVM-*" \
                   "Name=architecture,Values=x86_64" \
                   "Name=virtualization-type,Values=hvm" \
         --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \
         --output text)
     
     if [[ "$AMI_ID" == "None" ]] || [[ -z "$AMI_ID" ]]; then
-        error "Failed to find Amazon Linux 2023 AMI"
+        error "Failed to find Rocky Linux 9 AMI"
         exit 1
     fi
     
@@ -154,7 +154,7 @@ monitor_installation() {
     local max_attempts=30
     
     while [[ $ssh_ready == false ]] && [[ $attempts -lt $max_attempts ]]; do
-        if ssh -i ryanfill.pem -o ConnectTimeout=5 -o StrictHostKeyChecking=no ec2-user@$PUBLIC_IP "echo 'SSH Ready'" >/dev/null 2>&1; then
+        if ssh -i ryanfill.pem -o ConnectTimeout=5 -o StrictHostKeyChecking=no rocky@$PUBLIC_IP "echo 'SSH Ready'" >/dev/null 2>&1; then
             ssh_ready=true
             success "SSH is now available"
         else
@@ -179,10 +179,10 @@ monitor_installation() {
         ((check_count++))
         
         # Check if user-data log exists and get status
-        if ssh -i ryanfill.pem -o StrictHostKeyChecking=no ec2-user@$PUBLIC_IP "test -f /var/log/user-data.log" 2>/dev/null; then
+        if ssh -i ryanfill.pem -o StrictHostKeyChecking=no rocky@$PUBLIC_IP "test -f /var/log/user-data.log" 2>/dev/null; then
             
             # Get last few lines of user-data log
-            local log_output=$(ssh -i ryanfill.pem -o StrictHostKeyChecking=no ec2-user@$PUBLIC_IP "sudo tail -10 /var/log/user-data.log" 2>/dev/null || echo "Log read failed")
+            local log_output=$(ssh -i ryanfill.pem -o StrictHostKeyChecking=no rocky@$PUBLIC_IP "sudo tail -10 /var/log/user-data.log" 2>/dev/null || echo "Log read failed")
             
             # Check for completion indicators
             if echo "$log_output" | grep -q "Cockpit installation completed successfully"; then
@@ -211,7 +211,7 @@ monitor_installation() {
     
     if [[ $installation_complete == false ]]; then
         warning "Installation monitoring timed out after 30 minutes"
-        log "You can manually check progress with: ssh -i ryanfill.pem ec2-user@$PUBLIC_IP 'sudo tail -f /var/log/user-data.log'"
+        log "You can manually check progress with: ssh -i ryanfill.pem rocky@$PUBLIC_IP 'sudo tail -f /var/log/user-data.log'"
         return 1
     fi
     
@@ -227,7 +227,7 @@ wait_for_cockpit() {
     local max_attempts=20
     
     while [[ $cockpit_ready == false ]] && [[ $attempts -lt $max_attempts ]]; do
-        if ssh -i ryanfill.pem -o StrictHostKeyChecking=no ec2-user@$PUBLIC_IP "systemctl is-active cockpit.socket" >/dev/null 2>&1; then
+        if ssh -i ryanfill.pem -o StrictHostKeyChecking=no rocky@$PUBLIC_IP "systemctl is-active cockpit.socket" >/dev/null 2>&1; then
             cockpit_ready=true
             success "Cockpit is now active and ready"
         else
@@ -254,7 +254,7 @@ open_cockpit() {
     echo "Instance ID: $INSTANCE_ID"
     echo "Public IP:   $PUBLIC_IP"
     echo "Cockpit URL: $cockpit_url"
-    echo "SSH Access:  ssh -i ryanfill.pem ec2-user@$PUBLIC_IP"
+    echo "SSH Access:  ssh -i ryanfill.pem rocky@$PUBLIC_IP"
     echo ""
     echo "Opening Cockpit in your browser..."
     echo "═══════════════════════════════════════════════════"
@@ -305,7 +305,7 @@ main() {
         open_cockpit
     else
         warning "Installation monitoring had issues, but instance is running"
-        echo "Manual check: ssh -i ryanfill.pem ec2-user@$PUBLIC_IP 'sudo tail -f /var/log/user-data.log'"
+        echo "Manual check: ssh -i ryanfill.pem rocky@$PUBLIC_IP 'sudo tail -f /var/log/user-data.log'"
         echo "Cockpit URL: https://$PUBLIC_IP:9090"
     fi
 }

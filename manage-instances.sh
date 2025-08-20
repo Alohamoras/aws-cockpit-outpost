@@ -106,7 +106,7 @@ ssh_connect() {
     fi
     
     log "Connecting to $PUBLIC_IP..."
-    ssh -i ryanfill.pem ec2-user@"$PUBLIC_IP"
+    ssh -i ryanfill.pem rocky@"$PUBLIC_IP"
 }
 
 # Monitor installation logs
@@ -131,7 +131,7 @@ monitor_logs() {
     log "Press Ctrl+C to stop monitoring"
     echo ""
     
-    ssh -i ryanfill.pem ec2-user@"$PUBLIC_IP" "sudo tail -f /var/log/user-data.log"
+    ssh -i ryanfill.pem rocky@"$PUBLIC_IP" "sudo tail -f /var/log/user-data.log"
 }
 
 # Open Cockpit in browser

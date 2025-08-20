@@ -79,9 +79,14 @@ REGION="us-east-1"
 
 Once deployment completes, access Cockpit at:
 - **Web Interface**: `https://[PUBLIC_IP]:9090`
-- **SSH Access**: `ssh -i your-key.pem ec2-user@[PUBLIC_IP]`
+- **SSH Access**: `ssh -i your-key.pem rocky@[PUBLIC_IP]`
 
-Default login uses your EC2 key pair with `ec2-user` account.
+### Cockpit Login Credentials
+The installation automatically creates user accounts with web access:
+- **Username**: `admin` | **Password**: `Cockpit123`
+- **Username**: `rocky` | **Password**: `Cockpit123`
+
+Both users have sudo privileges for full system administration.
 
 ## Monitoring & Troubleshooting
 
@@ -140,12 +145,9 @@ The deployment follows a phased installation approach:
 
 MIT License - see [LICENSE](LICENSE) for details.
 
-## Contributing
+## To Do
+- Implement SSM so we won't need ssh access except for accessing locally
 
-1. Fork the repository
-2. Create a feature branch
-3. Test your changes on a real Outpost environment
-4. Submit a pull request with clear description
 
 ---
 
