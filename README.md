@@ -174,6 +174,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 - Password creation best practices and or hardening (optional)
 - SSM notification when user data is done running (DONE)
 - AWS CLI install for the SNS command inside the rocky linux (DONE)
+- Guide for running primarily from the local interface not the ENI (i.e. binding web to the LNI)
 
 ---
 
