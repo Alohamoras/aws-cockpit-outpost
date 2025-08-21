@@ -19,6 +19,7 @@ The deployment includes a complete Cockpit environment with:
 - **Virtualization Stack**: libvirt, QEMU-KVM, virt-manager for VM management
 - **Container Platform**: Podman with socket activation for container management
 - **Performance Monitoring**: PCP (Performance Co-Pilot) for system metrics
+- **Remote Management**: AWS Systems Manager (SSM) agent for secure remote access
 - **Third-party Extensions**: 45Drives modules for file sharing, navigation, and sensors
 - **Hardware Monitoring**: Automatic sensor detection on bare metal instances
 
@@ -28,18 +29,23 @@ The deployment includes a complete Cockpit environment with:
 - AWS CLI configured with appropriate permissions
 - SSH key pair for EC2 access
 - Security group allowing inbound HTTPS on port 9090
+- IAM permissions to create roles and instance profiles (for SSM integration)
+- SNS topic ARN for email notifications
 
 ### Launch Instance
 ```bash
+# Set your SNS topic for email notifications
+export SNS_TOPIC_ARN="arn:aws:sns:us-east-1:123456789012:your-topic-name"
 ./launch-cockpit-instance.sh
 ```
 
 This will automatically:
-1. Find the latest Amazon Linux 2023 AMI
-2. Launch a c6id.metal instance on your Outpost
-3. Execute the user-data installation script
-4. Monitor progress with real-time status updates
-5. Open Cockpit in your browser when ready
+1. Find the latest Rocky Linux 9 AMI
+2. Create IAM roles for SSM and SNS access
+3. Launch a c6id.metal instance on your Outpost
+4. Execute the user-data installation script
+5. Send email notification when installation completes
+6. Optionally monitor progress with real-time status updates
 
 ### Manage Instances
 ```bash
@@ -80,6 +86,7 @@ REGION="us-east-1"
 Once deployment completes, access Cockpit at:
 - **Web Interface**: `https://[PUBLIC_IP]:9090`
 - **SSH Access**: `ssh -i your-key.pem rocky@[PUBLIC_IP]`
+- **SSM Session Manager**: Connect via AWS Console Systems Manager without SSH keys
 
 ### Cockpit Login Credentials
 The installation automatically creates user accounts with web access:
@@ -91,11 +98,21 @@ Both users have sudo privileges for full system administration.
 ## Monitoring & Troubleshooting
 
 ### Installation Progress
-The launch script automatically monitors installation with:
-- SSH connectivity verification
-- User-data log parsing for completion status
-- Error detection and progress reporting
-- Service health verification
+The deployment provides multiple monitoring options:
+- **Email Notifications**: Automatic success/failure emails via SNS
+- **Real-time Monitoring**: Optional SSH-based progress tracking
+- **Manual Monitoring**: SSH access to view installation logs
+- **Error Detection**: Automatic failure notifications with details
+
+### Email Notifications Setup
+Email notifications are required for this deployment:
+
+1. **Create/Use an SNS Topic** with email subscription
+2. **Export the ARN** before launching:
+   ```bash
+   export SNS_TOPIC_ARN="arn:aws:sns:us-east-1:123456789012:your-topic-name"
+   ```
+3. **Launch normally** - you'll get success/failure emails automatically
 
 ### Manual Monitoring
 If you need to check progress manually:
@@ -146,10 +163,17 @@ The deployment follows a phased installation approach:
 MIT License - see [LICENSE](LICENSE) for details.
 
 ## To Do
-- Implement SSM so we won't need ssh access except for accessing locally
-- Create a user name and password for web access during install (DONE, needs testing)
+- Implement SSM so we won't need ssh access except for accessing locally (DONE)
+- Create a user name and password for web access during install (DONE)
 - Create an LNI by default during instance launch
 - Configure the LNI in the user data as the default interface for instances
+- Auto format and configure storage drives in user data.. or maybe have this as a script that executes at some point later.
+- complete another full end to end test launch
+- export an ODM image or something to demo
+- convert into a AMI pipeline (maybe)
+- Password creation best practices and or hardening (optional)
+- SSM notification when user data is done running (DONE)
+- AWS CLI install for the SNS command inside the rocky linux (DONE)
 
 ---
 

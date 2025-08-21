@@ -54,6 +54,7 @@ The `user-data.sh` script installs:
 - Virtualization: libvirt, QEMU-KVM, virt-manager
 - Container platform: Podman with socket activation
 - Performance monitoring: PCP (Performance Co-Pilot)
+- AWS Systems Manager (SSM) agent for remote management
 - Third-party modules: 45Drives file-sharing, navigator, sensors
 - Hardware monitoring (on bare metal instances)
 
@@ -71,6 +72,7 @@ Installation progress is automatically monitored with:
 Once deployment completes:
 - **Cockpit Web UI:** https://[PUBLIC_IP]:9090
 - **SSH Access:** `ssh -i ryanfill.pem rocky@[PUBLIC_IP]`
+- **SSM Session Manager:** Connect via AWS Console without SSH keys
 - **Installation Logs:** `/var/log/user-data.log` on the instance
 
 ### Login Credentials

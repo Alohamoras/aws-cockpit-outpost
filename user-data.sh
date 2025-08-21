@@ -2,44 +2,145 @@
 # AWS EC2 User Data Script for Cockpit Installation on Rocky Linux 9
 # This script installs and configures Cockpit with various modules
 
-# Exit on any error
-set -e
-
 # Log all output to file for debugging
 exec > >(tee -a /var/log/user-data.log)
 exec 2>&1
 echo "Starting Cockpit installation at $(date)"
 
-# Update the system
+# SNS Topic ARN for notifications (set by launch script via instance user data)
+# This will be replaced by the actual ARN from the environment variable
+SNS_TOPIC_ARN="PLACEHOLDER_SNS_TOPIC_ARN"
+
+# Retry function for DNF operations
+retry_dnf() {
+    local max_attempts=3
+    local attempt=1
+    local sleep_time=30
+    
+    while [ $attempt -le $max_attempts ]; do
+        echo "DNF attempt $attempt/$max_attempts: $*"
+        
+        # Clean cache and try the operation
+        if dnf clean all >/dev/null 2>&1 && dnf makecache >/dev/null 2>&1 && dnf "$@"; then
+            echo "DNF operation succeeded on attempt $attempt"
+            return 0
+        fi
+        
+        if [ $attempt -lt $max_attempts ]; then
+            echo "DNF attempt $attempt failed, retrying in $sleep_time seconds..."
+            sleep $sleep_time
+        else
+            echo "DNF operation failed after $max_attempts attempts"
+            return 1
+        fi
+        ((attempt++))
+    done
+}
+
+# Function to handle critical operations with error reporting
+execute_critical() {
+    local operation="$1"
+    shift
+    
+    echo "Executing critical operation: $operation"
+    if ! "$@"; then
+        send_error_notification "Critical operation failed: $operation" "$LINENO"
+        exit 1
+    fi
+}
+
+# Function to send error notification (defined early)
+send_error_notification() {
+    local error_message="$1"
+    local line_number="$2"
+    
+    # Get instance metadata
+    local instance_id=$(curl -s http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null || echo "unknown")
+    local public_ip=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "unknown")
+    
+    # Create error notification message
+    local subject="Cockpit Installation FAILED - $instance_id"
+    local notification_message="
+=== COCKPIT INSTALLATION FAILED ===
+
+Instance Details:
+- Instance ID: $instance_id
+- Public IP: $public_ip
+- Error Time: $(date)
+- Error Line: $line_number
+
+Error Details:
+$error_message
+
+Check installation logs:
+ssh -i your-key.pem rocky@$public_ip 'sudo tail -50 /var/log/user-data.log'
+
+=== END ERROR NOTIFICATION ===
+"
+    
+    # Send SNS notification (use full path for AWS CLI)
+    /usr/local/bin/aws sns publish \
+        --region us-east-1 \
+        --topic-arn "$SNS_TOPIC_ARN" \
+        --subject "$subject" \
+        --message "$notification_message" >/dev/null 2>&1 || echo "Failed to send error SNS notification"
+}
+
+# Set error trap for unexpected failures only
+trap 'send_error_notification "Script failed unexpectedly" $LINENO' ERR
+
+# Don't use blanket set -e, handle errors selectively
+set +e
+
+# Update the system with retry logic
 echo "Updating system packages..."
-dnf update -y
+execute_critical "System package update" retry_dnf update -y
+
+# Install required tools
+echo "Installing required packages..."
+execute_critical "Install curl and unzip" retry_dnf install -y curl unzip
 
 # Install EPEL repository (required for Cockpit packages)
 echo "Installing EPEL repository..."
-dnf install -y epel-release
+execute_critical "Install EPEL repository" retry_dnf install -y epel-release
+
+# Install AWS CLI for SNS notifications
+echo "Installing AWS CLI..."
+curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip -q awscliv2.zip
+./aws/install
+rm -rf awscliv2.zip aws/
+
+# Verify AWS CLI installation
+echo "Verifying AWS CLI installation..."
+/usr/local/bin/aws --version || echo "AWS CLI installation may have failed"
+
+# Install AWS SSM Agent for remote management
+echo "Installing AWS SSM Agent..."
+execute_critical "Install SSM Agent" retry_dnf install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
 
 # Install Cockpit and required modules
 echo "Installing Cockpit and modules..."
 
 # Install core modules first
-dnf install -y cockpit cockpit-system cockpit-ws cockpit-bridge
+execute_critical "Install core Cockpit modules" retry_dnf install -y cockpit cockpit-system cockpit-ws cockpit-bridge
 
 # Install additional modules with error handling
 echo "Installing additional Cockpit modules..."
-dnf install -y cockpit-machines || echo "cockpit-machines not available, skipping..."
-dnf install -y cockpit-podman || echo "cockpit-podman not available, skipping..."
-dnf install -y cockpit-networkmanager || echo "cockpit-networkmanager not available, skipping..."
-dnf install -y cockpit-storaged || echo "cockpit-storaged not available, skipping..."
-dnf install -y cockpit-packagekit || echo "cockpit-packagekit not available, skipping..."
-dnf install -y cockpit-sosreport || echo "cockpit-sosreport not available, skipping..."
+retry_dnf install -y cockpit-machines || echo "cockpit-machines not available, skipping..."
+retry_dnf install -y cockpit-podman || echo "cockpit-podman not available, skipping..."
+retry_dnf install -y cockpit-networkmanager || echo "cockpit-networkmanager not available, skipping..."
+retry_dnf install -y cockpit-storaged || echo "cockpit-storaged not available, skipping..."
+retry_dnf install -y cockpit-packagekit || echo "cockpit-packagekit not available, skipping..."
+retry_dnf install -y cockpit-sosreport || echo "cockpit-sosreport not available, skipping..."
 
 # Try to install cockpit-pcp separately (may not be available)
 echo "Installing optional performance monitoring module..."
-dnf install -y cockpit-pcp || echo "cockpit-pcp not available, skipping..."
+retry_dnf install -y cockpit-pcp || echo "cockpit-pcp not available, skipping..."
 
 # Install additional dependencies for virtualization (for cockpit-machines)
 echo "Installing virtualization dependencies..."
-dnf install -y \
+execute_critical "Install virtualization packages" retry_dnf install -y \
     libvirt \
     libvirt-client \
     virt-install \
@@ -48,11 +149,11 @@ dnf install -y \
 
 # Install Podman (for cockpit-podman)
 echo "Installing Podman..."
-dnf install -y podman
+execute_critical "Install Podman" retry_dnf install -y podman
 
 # Install performance monitoring tools (for cockpit-pcp)
 echo "Installing PCP for performance monitoring..."
-dnf install -y pcp pcp-system-tools
+execute_critical "Install PCP tools" retry_dnf install -y pcp pcp-system-tools
 
 # Install third-party modules (optional but recommended)
 echo "Installing third-party Cockpit modules..."
@@ -116,6 +217,9 @@ systemctl enable --now libvirtd
 
 # Enable and start Podman socket for container management
 systemctl enable --now podman.socket
+
+# Enable and start AWS SSM Agent for remote management
+systemctl enable --now amazon-ssm-agent
 
 # Enable NetworkManager (usually already enabled on Amazon Linux)
 systemctl enable --now NetworkManager
@@ -210,5 +314,61 @@ Cockpit is installed and running!
 Access: https://${INSTANCE_IP}:9090
 =========================================
 EOF
+
+# Send completion notification via SNS
+send_completion_notification() {
+    local status="$1"
+    local message="$2"
+    
+    # Get instance metadata
+    local instance_id=$(curl -s http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null || echo "unknown")
+    local public_ip=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "unknown")
+    local private_ip=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4 2>/dev/null || echo "unknown")
+    local az=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone 2>/dev/null || echo "unknown")
+    
+    # Create notification message
+    local subject="Cockpit Installation $status - $instance_id"
+    local notification_message="
+=== COCKPIT INSTALLATION $status ===
+
+Instance Details:
+- Instance ID: $instance_id
+- Public IP: $public_ip
+- Private IP: $private_ip
+- Availability Zone: $az
+- Completion Time: $(date)
+
+Installation Status: $status
+$message
+
+Access Information:
+- Cockpit Web UI: https://$public_ip:9090
+- SSH Access: ssh -i your-key.pem rocky@$public_ip
+- SSM Session Manager: Available via AWS Console
+
+Login Credentials:
+- Username: admin | Password: Cockpit123
+- Username: rocky | Password: Cockpit123
+
+Installed Services:
+- Cockpit Web Console (port 9090)
+- Libvirt/KVM (virtualization)
+- Podman (containers)
+- AWS SSM Agent (remote management)
+- Performance monitoring (PCP)
+
+=== END NOTIFICATION ===
+"
+    
+    # Send SNS notification
+    aws sns publish \
+        --region us-east-1 \
+        --topic-arn "$SNS_TOPIC_ARN" \
+        --subject "$subject" \
+        --message "$notification_message" >/dev/null 2>&1 || echo "Failed to send SNS notification"
+}
+
+# Send success notification
+send_completion_notification "SUCCESS" "Cockpit installation completed successfully. All services are running and configured."
 
 echo "User data script completed at $(date)"

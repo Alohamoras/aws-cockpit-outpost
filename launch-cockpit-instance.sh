@@ -5,14 +5,22 @@
 
 set -e
 
-# Configuration
-OUTPOST_ID="op-0c81637caaa70bcb8"
-SUBNET_ID="subnet-0ccfe76ef0f0071f6"
-SECURITY_GROUP_ID="sg-03e548d8a756262fb"
-KEY_NAME="ryanfill"
-INSTANCE_TYPE="c6id.metal"
-REGION="us-east-1"
+# Load environment variables from .env file if it exists
+if [[ -f .env ]]; then
+    source .env
+fi
+
+# Configuration (defaults - can be overridden by .env file)
+OUTPOST_ID="${OUTPOST_ID:-op-0c81637caaa70bcb8}"
+SUBNET_ID="${SUBNET_ID:-subnet-0ccfe76ef0f0071f6}"
+SECURITY_GROUP_ID="${SECURITY_GROUP_ID:-sg-03e548d8a756262fb}"
+KEY_NAME="${KEY_NAME:-ryanfill}"
+INSTANCE_TYPE="${INSTANCE_TYPE:-c6id.metal}"
+REGION="${REGION:-us-east-1}"
 USER_DATA_FILE="./user-data.sh"
+
+# SNS Topic ARN for notifications (required)
+SNS_TOPIC_ARN="${SNS_TOPIC_ARN}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -47,6 +55,20 @@ check_prerequisites() {
         exit 1
     fi
     
+    # Check SNS Topic ARN is provided
+    if [[ -z "$SNS_TOPIC_ARN" ]]; then
+        error "SNS_TOPIC_ARN environment variable is required for notifications."
+        error "Set it with: export SNS_TOPIC_ARN=\"arn:aws:sns:region:account:topic-name\""
+        exit 1
+    fi
+    
+    # Validate SNS ARN format
+    if [[ ! "$SNS_TOPIC_ARN" =~ ^arn:aws:sns:[^:]+:[^:]+:[^:]+$ ]]; then
+        error "Invalid SNS Topic ARN format: $SNS_TOPIC_ARN"
+        error "Expected format: arn:aws:sns:region:account-id:topic-name"
+        exit 1
+    fi
+    
     # Check user-data.sh exists
     if [[ ! -f "$USER_DATA_FILE" ]]; then
         error "User data file not found: $USER_DATA_FILE"
@@ -63,6 +85,7 @@ check_prerequisites() {
     chmod 400 ryanfill.pem
     
     success "Prerequisites check passed"
+    success "SNS notifications will be sent to: $SNS_TOPIC_ARN"
 }
 
 # Get latest Rocky Linux 9 AMI
@@ -86,9 +109,89 @@ get_latest_ami() {
     success "Found AMI: $AMI_ID"
 }
 
+# Ensure SSM instance profile exists
+ensure_ssm_instance_profile() {
+    log "Checking for SSM instance profile..."
+    
+    local profile_created=false
+    
+    # Check if instance profile exists
+    if aws iam get-instance-profile --instance-profile-name "CockpitSSMInstanceProfile" >/dev/null 2>&1; then
+        success "SSM instance profile already exists"
+    else
+        profile_created=true
+        log "Creating SSM instance profile..."
+        
+        # Create the instance profile
+    aws iam create-instance-profile \
+        --instance-profile-name "CockpitSSMInstanceProfile" \
+        --path "/" >/dev/null
+    
+    # Add the SSM managed role to the instance profile
+    aws iam add-role-to-instance-profile \
+        --instance-profile-name "CockpitSSMInstanceProfile" \
+        --role-name "AmazonSSMManagedInstanceCore" 2>/dev/null || {
+        
+        # If role doesn't exist, create it
+        log "Creating SSM role..."
+        aws iam create-role \
+            --role-name "AmazonSSMManagedInstanceCore" \
+            --assume-role-policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": "ec2.amazonaws.com"
+                        },
+                        "Action": "sts:AssumeRole"
+                    }
+                ]
+            }' >/dev/null
+        
+        # Attach the SSM managed policy
+        aws iam attach-role-policy \
+            --role-name "AmazonSSMManagedInstanceCore" \
+            --policy-arn "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" >/dev/null
+        
+        # Create and attach SNS policy for notifications
+        aws iam put-role-policy \
+            --role-name "AmazonSSMManagedInstanceCore" \
+            --policy-name "CockpitSNSNotifications" \
+            --policy-document "{
+                \"Version\": \"2012-10-17\",
+                \"Statement\": [
+                    {
+                        \"Effect\": \"Allow\",
+                        \"Action\": \"sns:Publish\",
+                        \"Resource\": \"$SNS_TOPIC_ARN\"
+                    }
+                ]
+            }" >/dev/null
+        
+        # Add role to instance profile
+        aws iam add-role-to-instance-profile \
+            --instance-profile-name "CockpitSSMInstanceProfile" \
+            --role-name "AmazonSSMManagedInstanceCore" >/dev/null
+    }
+    fi
+    
+    # Wait for IAM propagation if we created new resources
+    if [[ $profile_created == true ]]; then
+        log "Waiting 30 seconds for IAM propagation..."
+        sleep 30
+    fi
+    
+    success "SSM instance profile configured"
+}
+
 # Launch EC2 instance
 launch_instance() {
     log "Launching EC2 instance..."
+    
+    # Create temporary user-data file with SNS ARN substituted
+    local temp_userdata=$(mktemp)
+    sed "s/PLACEHOLDER_SNS_TOPIC_ARN/$SNS_TOPIC_ARN/g" "$USER_DATA_FILE" > "$temp_userdata"
     
     INSTANCE_ID=$(aws ec2 run-instances \
         --region "$REGION" \
@@ -97,11 +200,15 @@ launch_instance() {
         --key-name "$KEY_NAME" \
         --security-group-ids "$SECURITY_GROUP_ID" \
         --subnet-id "$SUBNET_ID" \
-        --user-data file://"$USER_DATA_FILE" \
+        --iam-instance-profile "Name=CockpitSSMInstanceProfile" \
+        --user-data file://"$temp_userdata" \
         --placement "AvailabilityZone=$(aws ec2 describe-subnets --region $REGION --subnet-ids $SUBNET_ID --query 'Subnets[0].AvailabilityZone' --output text)" \
         --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=Cockpit-Outpost-Server},{Key=Purpose,Value=Cockpit-WebConsole}]' \
         --query 'Instances[0].InstanceId' \
         --output text)
+    
+    # Clean up temporary file
+    rm -f "$temp_userdata"
     
     if [[ -z "$INSTANCE_ID" ]]; then
         error "Failed to launch instance"
@@ -123,7 +230,7 @@ wait_for_running() {
     success "Instance is now running"
 }
 
-# Get instance public IP
+# Get instance public IP and assign if needed
 get_public_ip() {
     log "Getting instance public IP..."
     
@@ -134,11 +241,38 @@ get_public_ip() {
         --output text)
     
     if [[ "$PUBLIC_IP" == "None" ]] || [[ -z "$PUBLIC_IP" ]]; then
-        error "No public IP assigned to instance"
-        exit 1
+        warning "Instance has no public IP, attempting to assign Elastic IP..."
+        
+        # Try to find available EIP
+        local eip_alloc=$(aws ec2 describe-addresses \
+            --region "$REGION" \
+            --query 'Addresses[?AssociationId==null].AllocationId' \
+            --output text | head -1)
+        
+        if [[ -n "$eip_alloc" && "$eip_alloc" != "None" ]]; then
+            log "Found available Elastic IP: $eip_alloc"
+            aws ec2 associate-address \
+                --region "$REGION" \
+                --instance-id "$INSTANCE_ID" \
+                --allocation-id "$eip_alloc" >/dev/null
+            
+            # Get the newly assigned public IP
+            PUBLIC_IP=$(aws ec2 describe-instances \
+                --region "$REGION" \
+                --instance-ids "$INSTANCE_ID" \
+                --query 'Reservations[0].Instances[0].PublicIpAddress' \
+                --output text)
+                
+            success "Assigned Elastic IP: $PUBLIC_IP"
+        else
+            error "No available Elastic IPs found. Please ensure subnet auto-assigns public IPs or release an EIP."
+            error "Alternatively, manually associate an Elastic IP after launch."
+            exit 1
+        fi
+    else
+        success "Instance already has public IP: $PUBLIC_IP"
     fi
     
-    success "Public IP: $PUBLIC_IP"
     echo "Public IP: $PUBLIC_IP" >> .last-instance-id
 }
 
@@ -216,6 +350,59 @@ monitor_installation() {
     fi
     
     return 0
+}
+
+# Verify Cockpit installation
+verify_installation() {
+    log "Verifying Cockpit installation..."
+    
+    local max_attempts=12  # 6 minutes
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        log "Verification attempt $attempt/$max_attempts..."
+        
+        # Check if Cockpit web interface is accessible
+        if curl -k -s --connect-timeout 10 https://$PUBLIC_IP:9090/ >/dev/null 2>&1; then
+            success "Cockpit web interface is accessible"
+            
+            # Check if SSH is working
+            if ssh -i ryanfill.pem -o ConnectTimeout=10 -o StrictHostKeyChecking=no rocky@$PUBLIC_IP "echo 'SSH test successful'" >/dev/null 2>&1; then
+                success "SSH access is working"
+                return 0
+            else
+                warning "Cockpit accessible but SSH may have issues"
+                return 0  # Cockpit is the main goal, SSH issues are secondary
+            fi
+        fi
+        
+        log "Cockpit not ready, waiting 30 seconds..."
+        sleep 30
+        ((attempt++))
+    done
+    
+    warning "Cockpit verification failed after $max_attempts attempts"
+    return 1
+}
+
+# Monitor installation with fallback verification
+monitor_with_fallback() {
+    log "Starting installation monitoring with fallback verification..."
+    
+    if monitor_installation; then
+        success "Installation monitoring completed successfully"
+        return 0
+    else
+        warning "Primary monitoring failed, attempting manual verification..."
+        
+        if verify_installation; then
+            success "Installation verified manually - Cockpit is working"
+            return 0
+        else
+            error "Installation appears to have failed completely"
+            return 1
+        fi
+    fi
 }
 
 # Wait for Cockpit to be ready
@@ -296,16 +483,44 @@ main() {
     
     check_prerequisites
     get_latest_ami
+    ensure_ssm_instance_profile
     launch_instance
     wait_for_running
     get_public_ip
     
-    if monitor_installation; then
-        wait_for_cockpit
-        open_cockpit
+    # Provide immediate access information
+    success "Instance launched successfully!"
+    echo ""
+    echo "═══════════════════════════════════════════════════"
+    echo "🚀 INSTANCE LAUNCHED"
+    echo "═══════════════════════════════════════════════════"
+    echo "Instance ID: $INSTANCE_ID"
+    echo "Public IP:   $PUBLIC_IP"
+    echo "SSH Access:  ssh -i ryanfill.pem rocky@$PUBLIC_IP"
+    echo ""
+    echo "📧 You will receive an email notification when"
+    echo "   Cockpit installation completes (5-10 minutes)"
+    echo ""
+    echo "📋 Manual monitoring:"
+    echo "   ssh -i ryanfill.pem rocky@$PUBLIC_IP 'sudo tail -f /var/log/user-data.log'"
+    echo "═══════════════════════════════════════════════════"
+    
+    # Ask user if they want to monitor installation progress
+    echo ""
+    read -p "Do you want to monitor installation progress? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        if monitor_with_fallback; then
+            wait_for_cockpit
+            open_cockpit
+        else
+            warning "Installation monitoring and verification failed"
+            echo "Check your email for completion notification"
+            echo "Cockpit URL: https://$PUBLIC_IP:9090"
+            echo "Manual verification: curl -k https://$PUBLIC_IP:9090/"
+        fi
     else
-        warning "Installation monitoring had issues, but instance is running"
-        echo "Manual check: ssh -i ryanfill.pem rocky@$PUBLIC_IP 'sudo tail -f /var/log/user-data.log'"
+        echo "Instance is running. Check your email for completion notification."
         echo "Cockpit URL: https://$PUBLIC_IP:9090"
     fi
 }

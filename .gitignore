@@ -36,3 +36,7 @@ config
 .env
 .env.local
 .env.*.local
+
+# Local configuration (may contain sensitive data)
+config.local
+settings.local
