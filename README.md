@@ -163,8 +163,7 @@ The deployment follows a phased installation approach:
 MIT License - see [LICENSE](LICENSE) for details.
 
 ## To Do
-- Implement SSM so we won't need ssh access except for accessing locally (DONE)
-- Create a user name and password for web access during install (DONE)
+
 - Create an LNI by default during instance launch
 - Configure the LNI in the user data as the default interface for instances
 - Auto format and configure storage drives in user data.. or maybe have this as a script that executes at some point later.
@@ -172,9 +171,11 @@ MIT License - see [LICENSE](LICENSE) for details.
 - export an ODM image or something to demo
 - convert into a AMI pipeline (maybe)
 - Password creation best practices and or hardening (optional)
+- Guide for running primarily from the local interface not the ENI (i.e. binding web to the LNI)
 - SSM notification when user data is done running (DONE)
 - AWS CLI install for the SNS command inside the rocky linux (DONE)
-- Guide for running primarily from the local interface not the ENI (i.e. binding web to the LNI)
+- Implement SSM so we won't need ssh access except for accessing locally (DONE)
+- Create a user name and password for web access during install (DONE)
 
 ---
 

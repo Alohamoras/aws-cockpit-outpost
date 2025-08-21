@@ -11,11 +11,40 @@ echo "Starting Cockpit installation at $(date)"
 # This will be replaced by the actual ARN from the environment variable
 SNS_TOPIC_ARN="PLACEHOLDER_SNS_TOPIC_ARN"
 
-# Retry function for DNF operations
+# Function to check network readiness for package repositories
+check_network_readiness() {
+    local max_attempts=20
+    local attempt=1
+    local sleep_time=60
+    
+    echo "Checking network readiness for package repositories..."
+    
+    while [ $attempt -le $max_attempts ]; do
+        echo "Network readiness check $attempt/$max_attempts..."
+        
+        # Test Rocky Linux repository connectivity
+        if curl -s --max-time 10 --connect-timeout 5 \
+           https://dl.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/repodata/repomd.xml >/dev/null 2>&1; then
+            echo "Network readiness confirmed - repositories accessible"
+            return 0
+        fi
+        
+        if [ $attempt -lt $max_attempts ]; then
+            echo "Network not ready, waiting $sleep_time seconds before retry..."
+            sleep $sleep_time
+        else
+            echo "Network readiness check failed after $max_attempts attempts"
+            return 1
+        fi
+        ((attempt++))
+    done
+}
+
+# Retry function for DNF operations with improved timing
 retry_dnf() {
     local max_attempts=3
     local attempt=1
-    local sleep_time=30
+    local sleep_time=120  # Increased from 30 to 120 seconds
     
     while [ $attempt -le $max_attempts ]; do
         echo "DNF attempt $attempt/$max_attempts: $*"
@@ -91,6 +120,30 @@ trap 'send_error_notification "Script failed unexpectedly" $LINENO' ERR
 
 # Don't use blanket set -e, handle errors selectively
 set +e
+
+# Check if this is an Outpost instance and add initial delay if needed
+check_outpost_and_delay() {
+    local outpost_arn=""
+    echo "Checking if this is an AWS Outpost instance..."
+    
+    # Try to get Outpost ARN from instance metadata
+    outpost_arn=$(curl -s --max-time 5 http://169.254.169.254/latest/meta-data/outpost-arn 2>/dev/null || echo "")
+    
+    if [[ -n "$outpost_arn" ]]; then
+        echo "Outpost instance detected: $outpost_arn"
+        echo "Adding initial delay for Outpost network stabilization..."
+        echo "Waiting 5 minutes for Outpost networking to fully initialize..."
+        sleep 300  # 5 minute delay for Outpost instances
+    else
+        echo "Standard EC2 instance detected, proceeding without delay"
+    fi
+}
+
+# Perform Outpost detection and delay
+check_outpost_and_delay
+
+# Ensure network readiness before proceeding with package operations
+execute_critical "Network readiness check" check_network_readiness
 
 # Update the system with retry logic
 echo "Updating system packages..."
