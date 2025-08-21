@@ -147,7 +147,9 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## To Do
 - Implement SSM so we won't need ssh access except for accessing locally
-
+- Create a user name and password for web access during install (DONE, needs testing)
+- Create an LNI by default during instance launch
+- Configure the LNI in the user data as the default interface for instances
 
 ---
 

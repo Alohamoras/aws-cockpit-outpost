@@ -20,16 +20,18 @@ dnf install -y epel-release
 
 # Install Cockpit and required modules
 echo "Installing Cockpit and modules..."
-dnf install -y \
-    cockpit \
-    cockpit-machines \
-    cockpit-podman \
-    cockpit-networkmanager \
-    cockpit-storaged \
-    cockpit-system \
-    cockpit-ws \
-    cockpit-packagekit \
-    cockpit-sosreport
+
+# Install core modules first
+dnf install -y cockpit cockpit-system cockpit-ws cockpit-bridge
+
+# Install additional modules with error handling
+echo "Installing additional Cockpit modules..."
+dnf install -y cockpit-machines || echo "cockpit-machines not available, skipping..."
+dnf install -y cockpit-podman || echo "cockpit-podman not available, skipping..."
+dnf install -y cockpit-networkmanager || echo "cockpit-networkmanager not available, skipping..."
+dnf install -y cockpit-storaged || echo "cockpit-storaged not available, skipping..."
+dnf install -y cockpit-packagekit || echo "cockpit-packagekit not available, skipping..."
+dnf install -y cockpit-sosreport || echo "cockpit-sosreport not available, skipping..."
 
 # Try to install cockpit-pcp separately (may not be available)
 echo "Installing optional performance monitoring module..."
@@ -96,13 +98,13 @@ echo "Enabling and starting services..."
 
 # Create admin user for Cockpit access
 echo "Creating admin user for Cockpit access..."
-useradd -m -G wheel admin
+useradd -m -G wheel,libvirt admin
 echo 'admin:Cockpit123' | chpasswd
 echo "Created admin user with username 'admin' and password 'Cockpit123'"
 
 # Also ensure rocky user has wheel group access and a password
 echo "Configuring rocky user for Cockpit access..."
-usermod -aG wheel rocky
+usermod -aG wheel,libvirt rocky
 echo 'rocky:Cockpit123' | chpasswd
 echo "Set password for rocky user: 'Cockpit123'"
 
